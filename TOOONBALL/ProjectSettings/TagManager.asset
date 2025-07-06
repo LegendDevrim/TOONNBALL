@@ -5,14 +5,19 @@ TagManager:
   serializedVersion: 2
   tags:
   - Ground
+  - TackleTrigger
+  - Ball
+  - Bullet
+  - BlueTeamPlayer
+  - RedTeamPlayer
   layers:
   - Default
   - TransparentFX
   - Ignore Raycast
-  - 
+  - groundMask
   - Water
   - UI
-  - 
+  - Player
   - 
   - 
   - 

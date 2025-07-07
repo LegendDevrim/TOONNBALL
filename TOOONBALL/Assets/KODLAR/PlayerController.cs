@@ -1,108 +1,117 @@
-using Photon.Pun;
 using UnityEngine;
+using Photon.Pun;
 
-[RequireComponent(typeof(CharacterController))]
 public class PlayerController : MonoBehaviourPun, IPunObservable
 {
     [Header("Movement")]
-    public float walkSpeed = 4f;
-    public float runSpeed = 8f;
-    public float jumpForce = 6f;
-    public float gravity = -9.81f;
+    public float moveSpeed = 5f;
 
-    [Header("Rotation")]
-    public float rotationSpeed = 10f;
+    [Header("Throwing")]
+    public GameObject redBallPrefab;
+    public GameObject blueBallPrefab;
+    public Transform throwOrigin;
+    public float throwForce = 10f;
 
-    private CharacterController controller;
-    private Vector3 velocity;
-    private bool isGrounded;
-
-    private float verticalVelocity = 0f;
-
-    private float inputX;
-    private float inputZ;
-    private bool jumpPressed;
+    [Header("Visual")]
+    public Renderer modelRenderer;
+    public TextMesh nameText;
 
     private Vector3 networkPosition;
     private Quaternion networkRotation;
 
+    private Rigidbody rb;
+    private Camera mainCam;
+    private Team myTeam;
+
     private void Awake()
     {
-        controller = GetComponent<CharacterController>();
+        rb = GetComponent<Rigidbody>();
+        mainCam = Camera.main;
         networkPosition = transform.position;
         networkRotation = transform.rotation;
+    }
+
+    private void Start()
+    {
+        // Takım atanır
+        string teamStr = photonView.Owner.CustomProperties["Team"].ToString();
+        myTeam = (Team)System.Enum.Parse(typeof(Team), teamStr);
+
+        SetAppearance();
     }
 
     private void Update()
     {
         if (photonView.IsMine)
         {
-            HandleInput();
-            Move();
+            HandleMovement();
+            HandleRotation();
+            HandleThrowing();
         }
         else
         {
-            // Smooth movement/update for network players
-            transform.position = Vector3.Lerp(transform.position, networkPosition, Time.deltaTime * 10);
-            transform.rotation = Quaternion.Slerp(transform.rotation, networkRotation, Time.deltaTime * 10);
+            // Remote player smooth sync
+            transform.position = Vector3.Lerp(transform.position, networkPosition, Time.deltaTime * 10f);
+            transform.rotation = Quaternion.Slerp(transform.rotation, networkRotation, Time.deltaTime * 10f);
         }
     }
 
-    private void HandleInput()
+    void HandleMovement()
     {
-        inputX = Input.GetAxis("Horizontal");
-        inputZ = Input.GetAxis("Vertical");
-        jumpPressed = Input.GetButtonDown("Jump");
+        float h = Input.GetAxis("Horizontal");
+        float v = Input.GetAxis("Vertical");
+        Vector3 dir = new Vector3(h, 0, v).normalized;
+
+        if (dir.magnitude > 0.1f)
+            rb.MovePosition(transform.position + dir * moveSpeed * Time.deltaTime);
     }
 
-    private void Move()
+    void HandleRotation()
     {
-        isGrounded = controller.isGrounded;
-
-        if (isGrounded && velocity.y < 0)
-            velocity.y = -2f;
-
-        Vector3 moveDir = new Vector3(inputX, 0, inputZ);
-        moveDir = Vector3.ClampMagnitude(moveDir, 1f);
-
-        // Rotate player smoothly towards move direction relative to camera
-        if (moveDir.magnitude > 0.1f)
+        Ray ray = mainCam.ScreenPointToRay(Input.mousePosition);
+        if (Physics.Raycast(ray, out RaycastHit hit, 100f))
         {
-            // Get camera forward and right on horizontal plane
-            Vector3 camForward = Camera.main.transform.forward;
-            camForward.y = 0;
-            camForward.Normalize();
-            Vector3 camRight = Camera.main.transform.right;
-            camRight.y = 0;
-            camRight.Normalize();
-
-            Vector3 desiredMoveDirection = camForward * moveDir.z + camRight * moveDir.x;
-
-            transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(desiredMoveDirection), Time.deltaTime * rotationSpeed);
-
-            // Check if run key pressed (left shift)
-            float speed = Input.GetKey(KeyCode.LeftShift) ? runSpeed : walkSpeed;
-
-            Vector3 movement = desiredMoveDirection * speed;
-
-            controller.Move(movement * Time.deltaTime);
+            Vector3 lookDir = hit.point - transform.position;
+            lookDir.y = 0;
+            if (lookDir != Vector3.zero)
+            {
+                Quaternion targetRot = Quaternion.LookRotation(lookDir);
+                transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, Time.deltaTime * 15f);
+            }
         }
-
-        // Jump goofy mechanic: jump with bounce height that oscillates
-        if (jumpPressed && isGrounded)
-        {
-            verticalVelocity = jumpForce * (1f + Mathf.Sin(Time.time * 5f) * 0.3f);  // oscillate jump height for goofiness
-        }
-
-        verticalVelocity += gravity * Time.deltaTime;
-        Vector3 verticalMove = new Vector3(0, verticalVelocity, 0);
-        controller.Move(verticalMove * Time.deltaTime);
     }
 
-    // Photon sync of position and rotation
+    void HandleThrowing()
+    {
+        if (Input.GetMouseButtonDown(0))
+        {
+            GameObject prefab = myTeam == Team.Red ? redBallPrefab : blueBallPrefab;
+            GameObject ball = PhotonNetwork.Instantiate(prefab.name, throwOrigin.position, Quaternion.identity);
+            Rigidbody ballRb = ball.GetComponent<Rigidbody>();
+            ballRb.velocity = transform.forward * throwForce;
+        }
+    }
+
+    void SetAppearance()
+    {
+        if (myTeam == Team.Red)
+        {
+            modelRenderer.material.color = Color.red;
+            nameText.color = Color.red;
+        }
+        else
+        {
+            modelRenderer.material.color = Color.blue;
+            nameText.color = Color.blue;
+        }
+
+        nameText.text = photonView.Owner.NickName;
+    }
+
+    // Network Sync
     public void OnPhotonSerializeView(PhotonStream stream, PhotonMessageInfo info)
     {
-        if(stream.IsWriting)
+        if (stream.IsWriting)
         {
             stream.SendNext(transform.position);
             stream.SendNext(transform.rotation);
